@@ -1,0 +1,4 @@
+# Python 3.12; upstream social adapter dependencies are isolated separately.
+-r requirements-test.txt
+pixivpy3==3.7.5
+playwright==1.62.0

@@ -1,0 +1,14 @@
+浏览器操作模板
+
+项目路径：/workspace/p2cos。浏览器辅助入口：creator_browser.py。
+仅使用当前环境正常浏览器内部的现有 browser-profile；不得读取、打印、复制、导出 Cookie、Token、请求认证头或存储值。缺失会话时由用户正常登录，不迁移其他环境资料。
+
+启动前正常关闭同一资料目录的其他上下文。creator_browser.py 从标准输入接收逐行 JSON，先等待 ready。示例只读操作：
+{"op":"goto","page":"creator","url":"https://creator.xiaohongshu.com/"}
+{"op":"location","page":"creator"}
+{"op":"dom_controls","page":"creator"}
+{"op":"close"}
+
+账号核对必须读取页面已加载的可见账号面板，对照私有 workflow.json 中配置的账号名和数字ID。网页报错不等于登录失效；HTTP503时保留原任务，检查网络，不绕过代理或TLS校验。
+
+辅助工具同时具有上传、填写和点击能力；发布必须先取得本任务有效claim并通过门禁。遇结果未知不再点击。截图、页面文本、账号核验和发帖回执均为私有运行证据，不进入公共仓库。

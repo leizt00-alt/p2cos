@@ -1,0 +1,12 @@
+p2cos v4 通用发布任务
+
+读取私有workflow.json、RUNBOOK.txt、QUALITY_TASKS.txt、RECOVERY.md和SOCIAL_AUTO_UPLOAD.md。先确定本次触发run_id及对应JOB_ID，禁止默认选“最新任务”。定时发布与准备共用scheduled:YYYY-MM-DD。仅在私有配置、平台登录会话及发布授权均有效时执行。
+
+1. 只读检查本run。已发布任务skip；in_flight、reconciliation_required、审核中或生成调用未知先核实，不再次提交。需要恢复准备时继续同run同作品；不得创建另一个run规避阻碍。
+2. 逐页核对原图、选定Cos版本、生成来源和独立质量复核、页序和完整性。纠正pending按RECOVERY.md处理。重新计算图片/提示词/特征/复核引用哈希，确认文件未修改。所有Cos页作为同一完整图文提交，不截断超限图片组。
+3. 确认平台页面显示的账号名和ID与私有配置一致；登录挑战或账号不匹配停止。核对标题长度、完整正文、AI生成文字、原作者/Pixiv来源、平台AI声明和已验证图片容量限制。
+4. social_auto_upload_adapter.py dry-run --job-id JOB_ID 通过后进入 publish --job-id JOB_ID，由State在提交前获得唯一claim并读取冻结包。定时任务遵守配置的上海发布时间；手动立即发布仅限数据库持久明确授权，不能改时钟或全局配置绕过。
+5. 最终发布按钮只调用一次。点击后任何异常或结果不明保留reconciliation_required，先通过reconcile与真实页面核实。只有核对了当前账号、全部媒体/顺序、文案、时间及已发布状态，才保存真实帖子ID/URL或严格UI回执。页面跳转或标题匹配不足以完成发布。
+6. 主工具明确提交前失败且任务授权涵盖旧网页回退时，先fallback-preflight再claim-legacy；必须取得本次有效legacy_claimed才可使用creator_browser辅助入口。旧网页同样先重新核对全部门禁，只点击一次。普通错误、未知状态、doctor/check-login失败不能充当回退授权。
+
+成功或阻碍都记录到同一私有任务。不要因一次失败重新生成、重复发布或重新选择原图。Git推送不等于云端发布任务已更新，部署方须另行核验实际加载模板版本。

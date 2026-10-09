@@ -1,0 +1,27 @@
+p2cos v4 通用运行手册
+
+部署根目录：/workspace/p2cos。私有workflow.json从workflow.example.json初始化，填写当前授权账号、Drive目录与实际平台容量。任务读取根目录本地文档；公共Git更新不会自动修改云端定时任务或现有部署。
+
+文件职责：prepare_task.txt负责选图、完整原图、生成与质量准备；publish_task.txt负责当前run发布；QUALITY_TASKS.txt定义独立角色；generation_prompt.txt为通用生成基线；RECOVERY.md定义纠正恢复；SOCIAL_AUTO_UPLOAD.md说明主发布与受控回退。
+
+run管理：
+  python p2cos_runs.py ensure-scheduled
+  python p2cos_runs.py create-manual
+  python p2cos_runs.py check --run-id RUN_ID
+
+手动立即发布参数 --publish-immediately 仅在用户明确授权该次立即发布时使用；同次触发重试可带 --run-id 原ID。定时run为scheduled:上海日期，准备与发布共用。每天可以有多个明确授权run，各自只选一个作品且跨run去重。不得因另一run已经成功而把本次新请求判为完成。
+
+原图准备入口：
+  python pixiv_pipeline.py candidates
+  python pixiv_pipeline.py download-selected --shortlist SHORTLIST_JSON --id ARTWORK_ID --run-id RUN_ID
+  python pixiv_pipeline.py resume-download --run-id RUN_ID
+
+先用正常Pixiv客户端授权获取榜单候选与预览，再视觉审核shortlist。shortlist记录candidate_manifest和approved，approved每项含id、visual_reviewed=true、platform_compatible=true、reason；按通过者原榜排名选择最高者。保持run保存的榜单来源，重试不改变原选择。正常环境提供PIXIV_REFRESH_TOKEN，由SDK在内存消费，不打印/导出其值。
+
+质量：所有原始页完整且按源顺序；独立原图分析、生成、复核、最终选择。首次生成后每页最多两次纠正，保留所有版本和真实调用记录。pending纠正必须先按RECOVERY.md查明。代码格式/哈希门禁不能替代实际看图与真实独立agent。
+
+发布：精确指定job-id，检查当前账号、图片全组、排序、哈希、完整文案、AI声明与来源。State持久claim冻结上传包；最终发布按钮只按一次。未知或审核中保持reconciliation_required并核实，不能切工具再次投稿。旧网页回退仅在明确授权及主工具持久提交前失败证据满足时，通过fallback-preflight和claim-legacy后进行。
+
+维护：数据库及其WAL/SHM、私有配置、运行历史、实际prompt、原图/Cos、真实工具/发布回执、截图和浏览器资料都留在私有环境。恢复备份使用一致SQLite备份，不复制活跃数据库文件假装一致。不要把运行备份上传公共Git。公共源码提交只按public-export.json显式白名单，检查暂存内容。迁移现有状态前保留私有备份并验证历史事实未改写；不重置已发布状态以促成重试。
+
+只读故障排查：先核对run→job→page→attempt，确定阻碍发生在准备、生成、质量、发布前还是可能已提交后。日志只保留安全错误类别；不要转储环境、认证响应、Cookie、Token或浏览器存储。网络失败保持代理/TLS策略，不通过新登录或换账号绕过。最终报告区分本地测试、源码推送、部署更新及真实发布结果。

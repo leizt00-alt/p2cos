@@ -1,0 +1,15 @@
+p2cos v4 独立质量角色模板
+
+所有报告均保存在私有运行目录；本文件只是通用要求。AgentID必须真实可核对，不得填写unknown或伪造独立性。原图分析、生成、复核和最终选择角色相互独立。
+
+原图分析agent：实际查看当前页，输出schema_version=2、analyst_agent_id、raw_sha256以及p2cos_quality.REQUIRED_CHECKS中的全部检查项。每项写visibility（visible/not_visible/unverifiable）、critical布尔值、expected与可定位evidence。细看构图/透视/背景、头躯干手臂手势腿姿、光照/阴影、领口/袖型/腰线/层次/透明度、衣摆/露肤间隙、左右袜子边界/不透明度/上沿/膝部相对位置、饰品/标记/滚边、脸/头发/服装身份。看不到的内容不能编造为通过。
+
+生成agent：实际查看当前页原图与特征清单，以当前原图作真实工具引用；保留全部版本，实际prompt及SHA-256、引用路径/角色/哈希、工具名、生成agent、返回模型（仅依据真实返回；不可得则如实说明）、输出文件与哈希。纠正先保存优化依据和target_checks，再按RECOVERY.md prepare/claim/保存结果/commit。不可覆盖旧输出或以原图充作Cos。
+
+复核agent：同时看原图与当前Cos，输出schema_version=2、真实reviewer_agent_id和对应raw/cos/features/generation哈希；检查集必须和特征清单一致，每项给pass/fail/unverifiable/not_applicable与视觉evidence。多页身份复核绑定全部当前Cos哈希。复核者不能是分析者或生成者。旧报告不能复用到新版本。
+
+纠正预算：首次生成后每页最多两次纠正。失败必须有绑定任务/attempt/prompt的真实终止工具证据；本地超时、agent中断、文件未出现或未知phase都不是已失败证据。pending/abandoned_unknown不得作为完成重试凑数。prompt必须依据上一复核作实质优化。
+
+最终选择agent：State.quality_candidates输出候选集；独立逐页比较并输出schema_version=3，绑定candidate_set_sha256、每个候选的generation/review哈希、评分和排名、最终版本、理由及未解决偏差；多页组内身份复核绑定最终选择的所有图片。满足质量检查时可以通过；需要best_available时，必须先完成预算与程序门禁，不能省略未解决偏差或把未知问题改为pass。
+
+发布前再次运行State.publish_ready。结构化检查只验证证据格式、绑定和一致性；视觉判断与真实agent隔离仍需编排者按实际证据负责，不能由文件存在或数值分数代替。

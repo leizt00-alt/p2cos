@@ -1,0 +1,56 @@
+{
+  "version": 4,
+  "schedule": {
+    "timezone": "Asia/Shanghai",
+    "prepare_at": "08:00",
+    "publish_at": "10:00"
+  },
+  "selection": {
+    "candidate_limit": 100,
+    "visual_shortlist_limit": 10,
+    "exclude_x_restrict": true,
+    "exclude_ugoira": true,
+    "ranking_schedule": {
+      "timezone": "Asia/Shanghai",
+      "anchor_date": "2026-10-09",
+      "cycle": [
+        "month",
+        "day"
+      ]
+    }
+  },
+  "generation": {
+    "max_correction_attempts_per_page": 2,
+    "prompt_template": "/workspace/p2cos/generation_prompt.txt",
+    "quality_tasks": "/workspace/p2cos/QUALITY_TASKS.txt"
+  },
+  "storage": {
+    "state_db": "/workspace/p2cos/state.sqlite3",
+    "local_root": "/workspace/work/p2cos_artworks",
+    "google_drive": {
+      "parent_folder_id": "REPLACE_WITH_YOUR_DRIVE_FOLDER_ID"
+    }
+  },
+  "publishing": {
+    "platforms": [
+      "xiaohongshu"
+    ],
+    "browser_profile": "/workspace/p2cos/browser-profile",
+    "browser_executable": "/usr/bin/chromium",
+    "xiaohongshu": {
+      "account": "REPLACE_WITH_YOUR_ACCOUNT_NAME",
+      "account_id": "REPLACE_WITH_YOUR_NUMERIC_ACCOUNT_ID",
+      "observed_limits": {
+        "max_images_per_post": null,
+        "max_image_bytes": null,
+        "formats": []
+      }
+    }
+  },
+  "history_import": {
+    "known_archived": [],
+    "raw_roots": [],
+    "selection_path": "/workspace/work/p2cos_history/selection.json",
+    "storage_path": "/workspace/work/p2cos_history/pixiv_storage.json"
+  }
+}

@@ -1,0 +1,2 @@
+# Offline unit tests use synthetic images and Python unittest.
+Pillow==12.3.0
