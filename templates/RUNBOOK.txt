@@ -1,4 +1,4 @@
-p2cos v5 通用运行手册
+p2cos v6 通用运行手册
 
 v5 pending恢复入口：每次恢复先运行 python /workspace/p2cos/p2cos_watchdog.py --config /workspace/p2cos/workflow.json --run-id 本次已有run_id，只读输出run/job/stage/age/next_action/needs_attention；不构造State做诊断。遵守RECOVERY.md“v5 有界恢复与只读巡检”：result_saved只commit，recorded交全新独立QA；普通reserved/prepared只有从未dispatch且原执行者不可用才fresh agent审计重派，replacement身份不可转让；unknown先找原结果，只有有效显式policy/真实用户授权、本地旧executor已停止且原调用不可续接的绑定证据、每页额外额度未使用，才自动进行一次authorized replacement。仅超时绝不触发并发重生成。保留原unknown；两次正常优化+独立最多一次unknown replacement，最多4次潜在调用。缺证据或预算耗尽必须报告具体阻碍。所有版本与质量门禁/耗尽择优保留；发布unknown仍只核查同一提交。巡检恢复限定已有原job，不创建run、不选新图；原08/10入口未选作时仍按各自既有选作规则。本地模板不等于云部署。
 
@@ -27,3 +27,12 @@ run管理：
 维护：数据库及其WAL/SHM、私有配置、运行历史、实际prompt、原图/Cos、真实工具/发布回执、截图和浏览器资料都留在私有环境。恢复备份使用一致SQLite备份，不复制活跃数据库文件假装一致。不要把运行备份上传公共Git。公共源码提交只按public-export.json显式白名单，检查暂存内容。迁移现有状态前保留私有备份并验证历史事实未改写；不重置已发布状态以促成重试。
 
 只读故障排查：先核对run→job→page→attempt，确定阻碍发生在准备、生成、质量、发布前还是可能已提交后。日志只保留安全错误类别；不要转储环境、认证响应、Cookie、Token或浏览器存储。网络失败保持代理/TLS策略，不通过新登录或换账号绕过。最终报告区分本地测试、源码推送、部署更新及真实发布结果。
+
+v6 全部真实成品归档与发布标注（08/10/恢复入口共同规则）
+用户已要求每次生图结果都存入 Google Drive，并明确第几次生成、最终选中哪张及是否真正发布；此规则覆盖旧“通过后才创建或上传整个 Drive 作品目录”的限制，仅提前候选与原图归档，不放宽最终成品或发布门禁。
+每个版本真实返回、完整解码及 hash 验证通过并经 record_cos（或 save_result→commit 等价入口）落库为 recorded 后，立即派全新 spawn_agent(fork_turns="none") 存储 agent 归档；恢复遇 recorded 也先检查并补齐该版本归档，同时交另一全新独立 QA。不得等待 State.publish_ready 或 QA 通过才保存，不漏存或覆盖低分/落选版本。QA 尚未完成时真实 score=null、qa_status=pending，之后据正式报告幂等更新；存储失败保留本地成果与具体错误，按同版本重试归档，不重新生成来补存。
+每作查重并复用唯一 Drive 目录。根目录保存全部 raw；每个真实版本及其实际 prompt、references（引用文件的真实 Drive file ID、角色、页码与 SHA256）、generation trace、工具 receipt、QA/score 和 STATUS.txt 放入 candidates/p{page}/v{physical_attempt}/。先归档引用文件，再记录可回读的实际 file ID；不得用路径/文件名冒充 ID 或 hash。目录与图文件支持 description 时同步说明；不支持则使用该目录 STATUS.txt、manifest.json 和根《生成记录与发布状态.txt》承载完整说明。
+根《生成记录与发布状态.txt》与 manifest.json 列全量尝试和真实版本：attempt_number=physical_attempt+1 是“尝试序号”，confirmed_generation_number 是同一作品按真实 recorded 顺序稳定分配并持久保存的“确认成功生成序号”，均同时标明 page、physical_attempt、版本、hash 和 Drive file ID；重复归档、QA完成或选择变化不重编号，不从最大 attempt 推算成功次数。legacy_unknown、unknown、superseded_unknown、failed 等无可验证图片的尝试单列真实证据，成功序号=null、generated=false，明确“无确认成品/结果未知或真实失败”，不得造图、造成功或补猜序号。无法核验历史顺序就保留 unknown 并说明依据缺失。
+每个版本明确 generated、selected、published 三个独立 boolean，并记录各自依据、真实分数或 pending；uploaded、queued、reviewing、selected 都不等于 published。图列表名称应可直接辨认，如“成品01_尝试01_候选_{id}_p{page}_cos_v{physical_attempt}.ext”，选中后改“最终选中_待发布”，独立验真后才改“最终选中_已验证发布”；更名复用同一 file ID、保持字节不变，以 file ID+hash 而非可变名称作幂等键。若选择改变，清除旧 selected，保留旧版本及其 published 历史，并如实标注历史已发布状态。
+只有全部原门禁通过：完整页组、标准独立 QA 或合法耗尽择优、全图/trace/hash、角色研究与文案、账号/登录、真实 run 授权及对应时间、AI 标识与去重，且 State.publish_ready.ready=true，才可在作品根目录放入仅最终选中整套 {id}_p{page}_cos.ext，与同页 raw 配对；根 cos 字节/hash 必须等于对应 selected candidate，索引明确最终对应第几次确认成品和哪次尝试。候选提前归档绝不是最终选择、质量通过或发布授权。
+仅在全新独立核验 agent 已按既有规则验证发布完成并形成真实回执后，才能给实际提交的选定版本 published=true；将真实 post URL/ID（严格 UI 回执无法取得 ID 时保持 null）、验证时间、回执截图/文件 ID 与所选版本 hash/页序绑定。可能已提交、审核中或结果未知保留真实状态并只 reconcile 同一提交，不重复发布。已发布或 verified 的任务仅跳过再次生成/发布，仍检查并由全新 fork_turns="none" 存储 agent 补齐全部候选、正式 QA/选择、已验真发布回执及索引；归档同步完整才结束，绝不再次提交。每次候选归档、QA、选择或发布状态变化后，同步幂等更新人可读索引、manifest、STATUS/可用 description 和列表名称，回读实际目录、文件 ID、名称与可验证内容 hash；相同版本 hash 不符则报冲突而不覆盖；新的生成尝试必须使用其对应新版本目录，同版本归档重试复用原目录和实际文件 ID。此归档规则不改变两次正常优化、一次独立授权 unknown replacement、原 executor 停止证据、独立 QA、social-auto-upload 主方式或仅确认提交前失败才允许的原网页回退职责。

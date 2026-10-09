@@ -1,4 +1,4 @@
-p2cos v4 独立质量角色模板
+p2cos v6 独立质量角色模板
 
 所有报告均保存在私有运行目录；本文件只是通用要求。AgentID必须真实可核对，不得填写unknown或伪造独立性。原图分析、生成、复核和最终选择角色相互独立。
 
@@ -13,3 +13,6 @@ p2cos v4 独立质量角色模板
 最终选择agent：State.quality_candidates输出候选集；独立逐页比较并输出schema_version=3，绑定candidate_set_sha256、每个候选的generation/review哈希、评分和排名、最终版本、理由及未解决偏差；多页组内身份复核绑定最终选择的所有图片。满足质量检查时可以通过；需要best_available时，必须先完成预算与程序门禁，不能省略未解决偏差或把未知问题改为pass。
 
 发布前再次运行State.publish_ready。结构化检查只验证证据格式、绑定和一致性；视觉判断与真实agent隔离仍需编排者按实际证据负责，不能由文件存在或数值分数代替。
+
+v6 全版本归档衔接
+每个真实输出完整解码/hash验证并 record_cos 或 save_result→commit 为 recorded 后，立即派全新 spawn_agent(fork_turns="none") 存储 agent 按 RUNBOOK.txt 的“v6 全部真实成品归档与发布标注”规则上传 Drive candidates/p{page}/v{physical_attempt}/；不等 QA 或 State.publish_ready，QA 尚无则 score=null、qa_status=pending，正式结果随后幂等更新。恢复 recorded 同样检查补齐归档并派另一个全新独立 QA，unknown/failed 无真实图只留真实证据，不冒充生成。全部候选包括低分和最终选中版本永久保留；根《生成记录与发布状态.txt》与 manifest.json 分开记录尝试序号 physical_attempt+1、按真实 recorded 顺序稳定分配的确认成功生成序号及 generated/selected/published。只有原最终门禁及 State.publish_ready 通过才复制选定整套到根 cos，字节/hash必须匹配 selected candidate；只有独立发布验真回执才能 published=true，必须绑定选定版本/hash与真实URL/ID或严格UI回执null ID。更新选择清旧selected但不改published历史，状态变化幂等同步并回读核验。完整目录、证据、命名与回读细则以 RUNBOOK.txt v6 为准；原 v5 有界恢复授权与预算、安全发布职责保持不变。

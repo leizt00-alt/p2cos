@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "schedule": {
     "timezone": "Asia/Shanghai",
     "prepare_at": "08:00",
@@ -31,6 +31,53 @@
     "local_root": "/workspace/work/p2cos_artworks",
     "google_drive": {
       "parent_folder_id": "REPLACE_WITH_YOUR_DRIVE_FOLDER_ID"
+    },
+    "candidate_archive_policy": {
+      "schema_version": 1,
+      "trigger": "each_real_decodable_hash_verified_recorded_version_immediately",
+      "fresh_storage_agent_fork_turns": "none",
+      "candidate_archive_requires_publish_ready": false,
+      "candidate_archive_requires_quality_pass": false,
+      "one_drive_folder_per_artwork": true,
+      "candidate_layout": "candidates/p{page}/v{physical_attempt}/",
+      "retain_all_versions_including_selected_and_lower_scores": true,
+      "artifacts": [
+        "image",
+        "actual_prompt",
+        "references_with_actual_drive_file_ids_and_sha256",
+        "generation_trace",
+        "tool_receipt",
+        "independent_qa_or_pending",
+        "STATUS.txt"
+      ],
+      "root_indexes": [
+        "生成记录与发布状态.txt",
+        "manifest.json"
+      ],
+      "attempt_number": "physical_attempt + 1",
+      "confirmed_generation_number": "stable_per_artwork_sequence_in_actual_recorded_order; never_infer_from_attempt; unknown_if_unverifiable",
+      "no_image_attempts": "evidence_only; confirmed_generation_number=null; generated=false",
+      "independent_status_fields": [
+        "generated",
+        "selected",
+        "published"
+      ],
+      "qa_pending": {
+        "score": null,
+        "qa_status": "pending"
+      },
+      "human_readable_candidate_name": "成品{confirmed_generation_number:02d}_尝试{attempt_number:02d}_{status}_{id}_p{page}_cos_v{physical_attempt}.{ext}",
+      "metadata": "description_if_supported_else_STATUS_and_manifest_and_human_readable_root_index",
+      "idempotency_key": "actual_drive_file_id_and_candidate_sha256; preserve_bytes_on_status_rename",
+      "final_root_cos_gate": "all_existing_quality_complete_pages_hash_trace_research_copy_account_login_run_time_ai_dedup_gates_and_State.publish_ready",
+      "final_root_cos_binding": "exact_selected_candidate_bytes_and_sha256; record_confirmed_generation_number_and_attempt_number",
+      "published_true_gate": "fresh_independent_verified_publication_receipt_bound_to_actual_selected_version_hash_and_page_order",
+      "publication_receipt": "real_post_url_and_id_or_strict_ui_receipt_with_null_id; verification_time_and_screenshot_file_ids",
+      "selection_change": "clear_previous_selected_only; preserve_published_history",
+      "status_changes": "idempotently_update_indexes_STATUS_available_descriptions_and_names_then_read_back_file_ids_parent_and_hash",
+      "archive_failure": "retain_local_evidence_and_report; retry_same_version_archive_without_regenerating",
+      "never_changes": "generation_api; retry_or_unknown_replacement_budgets; v5_authorization; independent_qa; publication_or_fallback_gates",
+      "verified_run_resume": "skip_regeneration_and_republication_only; fresh_storage_agent_reconciles_missing_archives_and_verified_status_indexes_before_end"
     }
   },
   "publishing": {

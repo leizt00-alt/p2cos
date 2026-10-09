@@ -1,4 +1,4 @@
-# p2cos v5 生成恢复模板
+# p2cos v6 生成恢复模板
 
 恢复使用原有 `run_id`、`job_id`、页索引和 `attempt_id`。不得删除纠正记录、清零次数、换生成者身份冒充原调用，或把未知结果视为失败后重发。
 
@@ -55,6 +55,9 @@ unknown/dispatching/submitted 的自动 replacement 还须有真实停止证据�
 
 符合条件后由新执行者调用 `State.supersede_unknown_with_authorization(job_id, page_index, attempt_id=旧ID, generator_agent_id=原ID, new_generator_agent_id=真实新ID, operator_agent_id=真实调度ID, optimization=完整继承原attempt已保存optimization并核验其仍对应当前最新已记录独立QA的对象, authorization={path,sha256}, mode="explicit_policy", policy={path,sha256})`。authorization 文件 kind=authorized_unknown_replacement，逐项绑定 run/job/artwork/page/attempt、原/新generator、operator、mode、local_request_id、request_sha256；含 accept_unknown_outcome=true、original_executor_stopped=true、statement、executor_stop_evidence 引用、user_authorization 引用。policy kind=bounded_unknown_recovery_policy、enabled=true、scope=all_runs 或精确 run_id、max_unknown_replacements_per_page=1、generation_only=true、unknown_publication_action=reconcile，且引用同一真实用户授权；source kind=explicit_user_authorization、scope=bounded_unknown_recovery_policy，保存真实 source/user_message。所有引用只含实际文件 path/sha256。不能把布尔配置、fixture、占位文本或自己写的声明当真实授权/停止事实。State 原子校验同页额外预算、原incarnation、全新身份和当前优化依据；随后仍须 prepare→首次 claim→真实调用→同执行链立即保存真实结果/trace→save→commit→全新独立QA。正常两次优化、耗尽择优与全部发布硬门禁不变。
 
-每日 08:00/10:00 原任务都在恢复检查中应用同一 policy。另一个 recovery_task.txt 模板可部署为单个自动任务、每天上海 09:15 与 10:15 各运行一次：仅恢复当天已有 scheduled run 的原 job，无 job 则报告，不创建 run/选图；09:15 只准备；真实10:00后才可按原发布流程对 ready 作品补发。已 verified 直接 skip。发布 unknown/in_flight/reconciliation_required/审核中永远只 remote reconcile，列表暂未看到帖子不是未提交证据，不能借生成恢复重复投稿。原 social-auto-upload 优先、明确未提交证据下的官方 UI 回退及所有共享门禁保留。
+每日 08:00/10:00 原任务都在恢复检查中应用同一 policy。另一个 recovery_task.txt 模板可部署为单个自动任务、每天上海 09:15 与 10:15 各运行一次：仅恢复当天已有 scheduled run 的原 job，无 job 则报告，不创建 run/选图；09:15 只准备；真实10:00后才可按原发布流程对 ready 作品补发。已发布或 verified 的任务仅跳过再次生成/发布，仍检查并由全新 fork_turns="none" 存储 agent 补齐全部候选、正式 QA/选择、已验真发布回执及索引；归档同步完整才结束，绝不再次提交。发布 unknown/in_flight/reconciliation_required/审核中永远只 remote reconcile，列表暂未看到帖子不是未提交证据，不能借生成恢复重复投稿。原 social-auto-upload 优先、明确未提交证据下的官方 UI 回退及所有共享门禁保留。
 
-本地模板变更不等于云端部署；部署者须更新原08/10 prompt并回读 v5、时区与时刻，再创建/更新唯一双时刻巡检任务并回读，避免重复调度。此文件本身不创建云任务。白名单私有 Drive 备份增加 p2cos_watchdog.py、recovery_task.txt、recovery_policy.json、recovery_authorization.json 及本次真实停止/授权回执；policy/用户原文/实际运行事实不得进入公共 Git，既有凭据/Cookie/profile排除规则不变。
+本地模板变更不等于云端部署；部署者须更新原08/10 prompt并回读 v6、时区与时刻，再创建/更新唯一双时刻巡检任务并回读，避免重复调度。此文件本身不创建云任务。白名单私有 Drive 备份增加 p2cos_watchdog.py、recovery_task.txt、recovery_policy.json、recovery_authorization.json 及本次真实停止/授权回执；policy/用户原文/实际运行事实不得进入公共 Git，既有凭据/Cookie/profile排除规则不变。
+
+v6 全版本归档衔接
+每个真实输出完整解码/hash验证并 record_cos 或 save_result→commit 为 recorded 后，立即派全新 spawn_agent(fork_turns="none") 存储 agent 按 RUNBOOK.txt 的“v6 全部真实成品归档与发布标注”规则上传 Drive candidates/p{page}/v{physical_attempt}/；不等 QA 或 State.publish_ready，QA 尚无则 score=null、qa_status=pending，正式结果随后幂等更新。恢复 recorded 同样检查补齐归档并派另一个全新独立 QA，unknown/failed 无真实图只留真实证据，不冒充生成。全部候选包括低分和最终选中版本永久保留；根《生成记录与发布状态.txt》与 manifest.json 分开记录尝试序号 physical_attempt+1、按真实 recorded 顺序稳定分配的确认成功生成序号及 generated/selected/published。只有原最终门禁及 State.publish_ready 通过才复制选定整套到根 cos，字节/hash必须匹配 selected candidate；只有独立发布验真回执才能 published=true，必须绑定选定版本/hash与真实URL/ID或严格UI回执null ID。更新选择清旧selected但不改published历史，状态变化幂等同步并回读核验。完整目录、证据、命名与回读细则以 RUNBOOK.txt v6 为准；原 v5 有界恢复授权与预算、安全发布职责保持不变。
