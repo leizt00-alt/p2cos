@@ -11,6 +11,7 @@
 !/p2cos_quality.py
 !/p2cos_runs.py
 !/p2cos_recovery.py
+!/p2cos_watchdog.py
 !/pixiv_pipeline.py
 !/creator_browser.py
 !/social_auto_upload_adapter.py
@@ -20,6 +21,8 @@
 !/test_p2cos_runs.py
 !/test_p2cos_selection.py
 !/test_p2cos_recovery.py
+!/test_p2cos_watchdog.py
+!/test_p2cos_unknown_replacement.py
 !/test_pixiv_pipeline.py
 !/test_social_auto_upload_adapter.py
 !/test_run_quality_validation.py
@@ -33,6 +36,9 @@
 /workflow.json
 /prepare_task.txt
 /publish_task.txt
+/recovery_task.txt
+/recovery_policy.json
+/recovery_authorization.json
 /generation_prompt.txt
 /QUALITY_TASKS.txt
 /RUNBOOK.txt

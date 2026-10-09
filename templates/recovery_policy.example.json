@@ -1,0 +1,18 @@
+{
+  "kind": "bounded_unknown_recovery_policy",
+  "schema_version": 1,
+  "enabled": false,
+  "scope": "all_runs",
+  "max_unknown_replacements_per_page": 1,
+  "generation_only": true,
+  "unknown_publication_action": "reconcile",
+  "user_authorization": {
+    "path": "/workspace/p2cos/recovery_authorization.json",
+    "sha256": "REPLACE_WITH_ACTUAL_EXPLICIT_USER_AUTHORIZATION_SHA256"
+  },
+  "require_original_executor_stopped_evidence": true,
+  "require_original_call_unrecoverable_observation": true,
+  "max_normal_corrections_per_page": 2,
+  "max_potential_tool_calls_per_page": 4,
+  "preserve_original_unknown": true
+}

@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "schedule": {
     "timezone": "Asia/Shanghai",
     "prepare_at": "08:00",
@@ -22,7 +22,9 @@
   "generation": {
     "max_correction_attempts_per_page": 2,
     "prompt_template": "/workspace/p2cos/generation_prompt.txt",
-    "quality_tasks": "/workspace/p2cos/QUALITY_TASKS.txt"
+    "quality_tasks": "/workspace/p2cos/QUALITY_TASKS.txt",
+    "max_unknown_replacements_per_page": 1,
+    "max_potential_tool_calls_per_page_with_explicit_policy": 4
   },
   "storage": {
     "state_db": "/workspace/p2cos/state.sqlite3",
@@ -52,5 +54,26 @@
     "raw_roots": [],
     "selection_path": "/workspace/work/p2cos_history/selection.json",
     "storage_path": "/workspace/work/p2cos_history/pixiv_storage.json"
+  },
+  "recovery": {
+    "auto_unknown_recovery_enabled": false,
+    "policy": {
+      "path": "/workspace/p2cos/recovery_policy.json",
+      "sha256": "REPLACE_WITH_ACTUAL_POLICY_SHA256"
+    },
+    "user_authorization": {
+      "path": "/workspace/p2cos/recovery_authorization.json",
+      "sha256": "REPLACE_WITH_ACTUAL_EXPLICIT_USER_AUTHORIZATION_SHA256"
+    },
+    "watchdog_entrypoint": "/workspace/p2cos/p2cos_watchdog.py",
+    "recovery_prompt": "/workspace/p2cos/recovery_task.txt",
+    "planned_watchdog_times": [
+      "09:15",
+      "10:15"
+    ],
+    "watchdog_timezone": "Asia/Shanghai",
+    "watchdog_schedule_deployment_status": "not_deployed",
+    "no_new_run_or_selection_in_watchdog": true,
+    "publication_unknown_action": "remote_reconcile_only"
   }
 }

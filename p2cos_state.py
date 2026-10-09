@@ -23,7 +23,7 @@ from p2cos_quality import (
     quality_score, unresolved_checks, validate_features, validate_review, verdict_reasons,
 )
 from p2cos_runs import migrate_runs, reserve_for_run, claim_run_publication, publication_not_before
-from p2cos_recovery import CorrectionRecoveryMixin, migrate_recovery
+from p2cos_recovery import CorrectionRecoveryMixin, migrate_recovery, migrate_correction_slots
 
 
 PLATFORMS = ("douyin", "xiaohongshu")
@@ -198,6 +198,7 @@ class State(CorrectionRecoveryMixin):
             )""")
         with self._connect() as db:
             migrate_runs(db)
+            migrate_correction_slots(db)
 
     def _now(self) -> datetime:
         now = self._clock() if self._clock is not None else datetime.now(ZoneInfo("Asia/Shanghai"))
@@ -440,10 +441,13 @@ class State(CorrectionRecoveryMixin):
                     generator_history.add(generator_agent_id)
                     generation = {"generator_agent_id": generator_agent_id, "generator_history": sorted(generator_history), "raw_sha256": raw["sha256"],
                                   "cos_sha256": details["sha256"], "features_sha256": digest(features),
-                                  "correction_attempt": page["correction_count"],
+                                  "correction_attempt": pending["attempt_number"] if pending else 0,
                                   "correction_attempt_id": correction_attempt_id,
                                   "optimization": pending.get("optimization") if pending else None,
                                   "trace": generation_trace}
+                    if pending and pending.get("optimization_slot") is not None:
+                        generation["optimization_slot"] = pending["optimization_slot"]
+                        generation["replacement_of"] = pending.get("replacement_of")
                 self._invalidate_reviews(db, job_id)
                 db.execute("UPDATE pages SET cos=?,generation=?,qa_passed=0,pending_correction=NULL WHERE job_id=? AND page_index=?",
                            (json.dumps(details), json.dumps(generation) if generation else None, job_id, page_index))
@@ -514,11 +518,29 @@ class State(CorrectionRecoveryMixin):
         if prompt.strip() in prompts:
             raise StateError("Optimize the prompt using the review findings; a previous prompt cannot be retried unchanged")
 
+    def _validate_correction_optimization(self, db, job_id, page_index, page, optimization):
+        generation = json.loads(page["generation"]) if page["generation"] else None
+        version_hash = digest(generation) if generation else None
+        latest = db.execute("SELECT report,review_sha256 FROM quality_version_reviews WHERE job_id=? AND page_index=? AND generation_sha256=? ORDER BY review_id DESC LIMIT 1", (job_id, page_index, version_hash)).fetchone()
+        if latest is None:
+            raise StateError("An independent review of the current generation is required before optimization")
+        review = json.loads(latest["report"])
+        targets = unresolved_checks(json.loads(page["features"]), review)
+        if not targets:
+            raise StateError("The current generation has no unresolved quality checks to optimize")
+        if (not isinstance(optimization, dict) or optimization.get("based_on_generation_sha256") != version_hash
+                or optimization.get("review_sha256") != latest["review_sha256"]
+                or not isinstance(optimization.get("target_checks"), list)
+                or set(optimization["target_checks"]) != set(targets)):
+            raise StateError("Prompt optimization must bind the current generation, latest review and every unresolved check")
+        self._quality_input(nonempty, optimization.get("changes"), "Prompt optimization explanation")
+
     def begin_correction(self, job_id, page_index, *, generator_agent_id: str, optimization: dict | None = None) -> dict:
         """Reserve an edit BEFORE generation, including attempts that later fail.
 
-        At most two attempts follow the initial generation. A pending attempt
-        must be recorded or explicitly failed before another attempt is opened.
+        At most two normal optimization slots follow the initial generation.
+        One separately authorized unknown replacement can share its original
+        slot. Every call retains its own monotonically increasing attempt.
         """
         self._quality_input(agent_id, generator_agent_id, "generator_agent_id")
         with self._transaction() as db:
@@ -533,30 +555,18 @@ class State(CorrectionRecoveryMixin):
                 raise StateError("Correction limit exceeded; at most two correction attempts are allowed; select the best eligible version")
             if page["pending_correction"]:
                 raise StateError("Resolve the pending correction before reserving another attempt")
-            generation = json.loads(page["generation"]) if page["generation"] else None
-            version_hash = digest(generation) if generation else None
-            latest = db.execute("SELECT report,review_sha256 FROM quality_version_reviews WHERE job_id=? AND page_index=? AND generation_sha256=? ORDER BY review_id DESC LIMIT 1", (job_id, page_index, version_hash)).fetchone()
-            if latest is None:
-                raise StateError("An independent review of the current generation is required before optimization")
-            review = json.loads(latest["report"])
-            targets = unresolved_checks(json.loads(page["features"]), review)
-            if not targets:
-                raise StateError("The current generation has no unresolved quality checks to optimize")
-            if (not isinstance(optimization, dict) or optimization.get("based_on_generation_sha256") != version_hash
-                    or optimization.get("review_sha256") != latest["review_sha256"]
-                    or not isinstance(optimization.get("target_checks"), list)
-                    or set(optimization["target_checks"]) != set(targets)):
-                raise StateError("Prompt optimization must bind the current generation, latest review and every unresolved check")
-            self._quality_input(nonempty, optimization.get("changes"), "Prompt optimization explanation")
+            self._validate_correction_optimization(db, job_id, page_index, page, optimization)
             self._assign_agent(db, job_id, generator_agent_id, "generator", fresh=True)
             self._invalidate_reviews(db, job_id)
-            attempt = {"attempt_id": uuid4().hex, "attempt_number": page["correction_count"] + 1,
+            number = db.execute("SELECT COALESCE(MAX(attempt_number),0)+1 FROM quality_corrections WHERE job_id=? AND page_index=?", (job_id, page_index)).fetchone()[0]
+            attempt = {"attempt_id": uuid4().hex, "attempt_number": number,
+                       "optimization_slot": page["correction_count"] + 1, "replacement_of": None,
                        "generator_agent_id": generator_agent_id, "optimization": optimization}
-            db.execute("INSERT INTO quality_corrections(attempt_id,job_id,page_index,attempt_number,generator_agent_id,optimization) VALUES (?,?,?,?,?,?)",
-                       (attempt["attempt_id"], job_id, page_index, attempt["attempt_number"], generator_agent_id, json.dumps(optimization, ensure_ascii=False)))
+            db.execute("INSERT INTO quality_corrections(attempt_id,job_id,page_index,attempt_number,generator_agent_id,optimization,optimization_slot) VALUES (?,?,?,?,?,?,?)",
+                       (attempt["attempt_id"], job_id, page_index, number, generator_agent_id, json.dumps(optimization, ensure_ascii=False), attempt["optimization_slot"]))
             self._reserve_correction_recovery(db, attempt["attempt_id"])
             db.execute("UPDATE pages SET correction_count=?,pending_correction=?,quality_blocked=0 WHERE job_id=? AND page_index=?",
-                       (attempt["attempt_number"], json.dumps(attempt), job_id, page_index))
+                       (attempt["optimization_slot"], json.dumps(attempt), job_id, page_index))
             self._refresh(db, job_id)
         return attempt
 
@@ -652,9 +662,19 @@ class State(CorrectionRecoveryMixin):
     @classmethod
     def _retry_budget_completed(cls, db, job_id, page_index, candidates):
         attempts = list(db.execute("SELECT * FROM quality_corrections WHERE job_id=? AND page_index=? ORDER BY attempt_number", (job_id, page_index)))
-        if len(attempts) != 2 or [a["attempt_number"] for a in attempts] != [1, 2]:
+        roots = [a for a in attempts if not a["replacement_of"]]
+        if len(roots) != 2 or [a["optimization_slot"] for a in roots] != [1, 2]:
             return False
-        for attempt in attempts:
+        for root in roots:
+            replacements = [a for a in attempts if a["replacement_of"] == root["attempt_id"]]
+            if replacements:
+                if (len(replacements) != 1 or root["status"] != "superseded_unknown"
+                        or replacements[0]["optimization_slot"] != root["optimization_slot"]
+                        or not replacements[0]["replacement_authorization"]):
+                    return False
+                attempt = replacements[0]
+            else:
+                attempt = root
             if not attempt["optimization"]:
                 return False
             if attempt["status"] == "failed":

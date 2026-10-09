@@ -1,4 +1,4 @@
-# p2cos v4 生成恢复模板
+# p2cos v5 生成恢复模板
 
 恢复使用原有 `run_id`、`job_id`、页索引和 `attempt_id`。不得删除纠正记录、清零次数、换生成者身份冒充原调用，或把未知结果视为失败后重发。
 
@@ -42,3 +42,19 @@ python p2cos_recovery.py --db /workspace/p2cos/state.sqlite3 --job-id JOB_ID
 `fail_correction` 仅接受真实终止工具失败和匹配prompt的证据。超时、代理中断、没有本地文件、agent停止、日志缺失都无法单独证明失败或未提交。确认未提交必须有权威未受理证据，并确认原执行者停止；才可通过 `resolve_correction_unknown(..., resolution="not_submitted", evidence=...)` 复用同attempt。
 
 已提交但无法继续查询时保留阻碍。没有通用的工具结果查询/幂等接口，不能声称这些状态记录保证远端恰好执行一次。发布的未知提交另按SOCIAL_AUTO_UPLOAD.md核对，不能把生成恢复当作重新发帖授权。
+
+## v5 有界恢复与只读巡检
+
+`p2cos_watchdog.py --config /workspace/p2cos/workflow.json` 只读检查真实 Asia/Shanghai 当天已有 scheduled run；可加 `--run-id RUN_ID` 精确检查另一个已有 run。它只用 SQLite `mode=ro`/`query_only`，不构造 State、不迁移、不创建 run/job、不选新图、不生成、不发布。输出 run/job、stage、age、deadline、next_action、needs_attention、正常/额外预算及未知记录；age/缺心跳不是失败证据，completed_quality_slots 留 null 等待真正 State 质量核验，不能据健康输出宣称 ready。
+
+每页保留初版、最多 2 个正常优化槽，以及独立的最多 1 次未知调用 replacement；因此最多 4 次潜在工具调用（含原未知调用），不能写成总 3 次。replacement 与原优化槽相连，不清零 correction_count、不覆盖旧记录、不伪造失败。原记录保持 superseded_unknown/outcome=unknown；replacement 不得再次 replacement，也不得通过 reassign 改变其授权绑定的新执行者。若原结果后来出现，用 audit_late_superseded_result 保留审计，不覆盖当前候选、替换来源或再发一次。未知、放弃未知、superseded_unknown 自身都不是完成质量槽；只有该槽真实 recorded 且具有效独立QA的候选或真实终结失败证据，才由 State 判断其完成资格。
+
+自动恢复默认关闭，只有私有 workflow.recovery.auto_unknown_recovery_enabled=true、匹配文件 hash 的 enabled policy 及真实 explicit_user_authorization 同时有效才可启用；本部署的有效授权按私有文件核验，不再逐次询问已授权的同范围恢复。公共模板中的占位授权没有效力。每次先找真实原结果/可续接原调用：result_saved 仅 verify+commit 后交全新独立QA，recorded 继续独立QA。普通 reserved/prepared 只有历史从未 dispatch_claimed 且原执行者不可用时才审计 reassign 给全新生成者、重新 prepare、首次 claim；replacement 的 reserved/prepared 只能恢复授权绑定执行者，不能转让身份。提交过的调用不能借此重派。
+
+unknown/dispatching/submitted 的自动 replacement 还须有真实停止证据：有真实权威观察证明原本地 executor 已停止，并确认不能续接原调用，记录真实工具观察；仅失联、查无活动记录、无法续接本身均不证明停止；仅时长、目录空、无输出、到达发布时间或短阈值绝不触发并发替换。停止本地执行者仍不证明远端停止或失败。executor_stopped JSON 须绑定 run_id、artwork_id、job_id、page_index、attempt_id、generator_agent_id、local_request_id、request_sha256（legacy 两项显式 null），outcome=stopped、original_call_recoverable=false 和具体 statement；真实回执以路径/hash保留，不伪造事实。可将引用列表保存为私有 JSON 的 executor_stop_evidence 数组，以 `--evidence-manifest MANIFEST_PATH` 供 watchdog 复核。缺证据、policy无效或额外预算已占用只能告警并保留未知。
+
+符合条件后由新执行者调用 `State.supersede_unknown_with_authorization(job_id, page_index, attempt_id=旧ID, generator_agent_id=原ID, new_generator_agent_id=真实新ID, operator_agent_id=真实调度ID, optimization=完整继承原attempt已保存optimization并核验其仍对应当前最新已记录独立QA的对象, authorization={path,sha256}, mode="explicit_policy", policy={path,sha256})`。authorization 文件 kind=authorized_unknown_replacement，逐项绑定 run/job/artwork/page/attempt、原/新generator、operator、mode、local_request_id、request_sha256；含 accept_unknown_outcome=true、original_executor_stopped=true、statement、executor_stop_evidence 引用、user_authorization 引用。policy kind=bounded_unknown_recovery_policy、enabled=true、scope=all_runs 或精确 run_id、max_unknown_replacements_per_page=1、generation_only=true、unknown_publication_action=reconcile，且引用同一真实用户授权；source kind=explicit_user_authorization、scope=bounded_unknown_recovery_policy，保存真实 source/user_message。所有引用只含实际文件 path/sha256。不能把布尔配置、fixture、占位文本或自己写的声明当真实授权/停止事实。State 原子校验同页额外预算、原incarnation、全新身份和当前优化依据；随后仍须 prepare→首次 claim→真实调用→同执行链立即保存真实结果/trace→save→commit→全新独立QA。正常两次优化、耗尽择优与全部发布硬门禁不变。
+
+每日 08:00/10:00 原任务都在恢复检查中应用同一 policy。另一个 recovery_task.txt 模板可部署为单个自动任务、每天上海 09:15 与 10:15 各运行一次：仅恢复当天已有 scheduled run 的原 job，无 job 则报告，不创建 run/选图；09:15 只准备；真实10:00后才可按原发布流程对 ready 作品补发。已 verified 直接 skip。发布 unknown/in_flight/reconciliation_required/审核中永远只 remote reconcile，列表暂未看到帖子不是未提交证据，不能借生成恢复重复投稿。原 social-auto-upload 优先、明确未提交证据下的官方 UI 回退及所有共享门禁保留。
+
+本地模板变更不等于云端部署；部署者须更新原08/10 prompt并回读 v5、时区与时刻，再创建/更新唯一双时刻巡检任务并回读，避免重复调度。此文件本身不创建云任务。白名单私有 Drive 备份增加 p2cos_watchdog.py、recovery_task.txt、recovery_policy.json、recovery_authorization.json 及本次真实停止/授权回执；policy/用户原文/实际运行事实不得进入公共 Git，既有凭据/Cookie/profile排除规则不变。

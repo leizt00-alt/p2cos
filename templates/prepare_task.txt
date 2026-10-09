@@ -1,4 +1,6 @@
-p2cos v4 通用准备任务
+p2cos v5 通用准备任务
+
+v5 pending恢复入口：每次恢复先运行 python /workspace/p2cos/p2cos_watchdog.py --config /workspace/p2cos/workflow.json --run-id 本次已有run_id，只读输出run/job/stage/age/next_action/needs_attention；不构造State做诊断。遵守RECOVERY.md“v5 有界恢复与只读巡检”：result_saved只commit，recorded交全新独立QA；普通reserved/prepared只有从未dispatch且原执行者不可用才fresh agent审计重派，replacement身份不可转让；unknown先找原结果，只有有效显式policy/真实用户授权、本地旧executor已停止且原调用不可续接的绑定证据、每页额外额度未使用，才自动进行一次authorized replacement。仅超时绝不触发并发重生成。保留原unknown；两次正常优化+独立最多一次unknown replacement，最多4次潜在调用。缺证据或预算耗尽必须报告具体阻碍。所有版本与质量门禁/耗尽择优保留；发布unknown仍只核查同一提交。巡检恢复限定已有原job，不创建run、不选新图；原08/10入口未选作时仍按各自既有选作规则。本地模板不等于云部署。
 
 先读取私有 workflow.json、RUNBOOK.txt、QUALITY_TASKS.txt、generation_prompt.txt、RECOVERY.md；本模板不包含账号、DriveID或运行历史。
 

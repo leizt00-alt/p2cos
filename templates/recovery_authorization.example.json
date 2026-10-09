@@ -1,0 +1,8 @@
+{
+  "kind": "explicit_user_authorization",
+  "scope": "bounded_unknown_recovery_policy",
+  "source": "REPLACE_WITH_ACTUAL_USER_AUTHORIZATION_SOURCE",
+  "user_message": "REPLACE_WITH_ACTUAL_EXPLICIT_USER_AUTHORIZATION; DO_NOT_USE_THIS_TEMPLATE_AS_EVIDENCE",
+  "question": "REPLACE_WITH_ACTUAL_QUESTION_IF_APPLICABLE",
+  "captured_at": "REPLACE_WITH_ACTUAL_CAPTURE_TIME; NOT_USER_MESSAGE_TIME"
+}

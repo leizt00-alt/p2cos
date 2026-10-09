@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sqlite3
 from uuid import uuid4
 
@@ -34,6 +35,72 @@ def migrate_recovery(db):
         event TEXT NOT NULL, details TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )""")
+
+
+def migrate_correction_slots(db):
+    """Separate two optimization slots from at most three physical corrections.
+
+    Rebuild outside a transaction, preserving every old column, row, journal and
+    event. NULL old journals remain unknown. This never changes page counts or
+    publication facts, and is never called by read-only inspection.
+    """
+    if db.in_transaction:
+        raise RuntimeError("Correction migration requires a connection outside a transaction")
+    columns = [r[1] for r in db.execute("PRAGMA table_info(quality_corrections)")]
+    if "optimization_slot" in columns:
+        return
+    foreign_keys = db.execute("PRAGMA foreign_keys").fetchone()[0]
+    db.execute("PRAGMA foreign_keys=OFF")
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        columns = [r[1] for r in db.execute("PRAGMA table_info(quality_corrections)")]
+        if "optimization_slot" in columns:
+            db.commit()
+            return
+        schema = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='quality_corrections'").fetchone()[0]
+        schema, count = re.subn(r"CHECK\s*\(\s*attempt_number\s+BETWEEN\s+1\s+AND\s+2\s*\)",
+                               "CHECK(attempt_number BETWEEN 1 AND 3)", schema, flags=re.I)
+        if count != 1:
+            raise RuntimeError("Unrecognized correction schema; migration refused")
+        schema = re.sub(r"^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`\[]?quality_corrections[\"`\]]?",
+                        "CREATE TABLE quality_corrections_slot_migration", schema, count=1, flags=re.I)
+        schema = schema.replace("(", "(optimization_slot INTEGER NOT NULL CHECK(optimization_slot BETWEEN 1 AND 2), replacement_of TEXT REFERENCES quality_corrections(attempt_id), replacement_authorization TEXT, ", 1)
+        auxiliary = [r[0] for r in db.execute("SELECT sql FROM sqlite_master WHERE tbl_name='quality_corrections' AND type IN ('index','trigger') AND sql IS NOT NULL")]
+        db.execute(schema)
+        names = ",".join('"' + c.replace('"', '""') + '"' for c in columns)
+        db.execute(f"INSERT INTO quality_corrections_slot_migration({names},optimization_slot) SELECT {names},attempt_number FROM quality_corrections")
+        db.execute("DROP TABLE quality_corrections")
+        db.execute("ALTER TABLE quality_corrections_slot_migration RENAME TO quality_corrections")
+        for statement in auxiliary:
+            db.execute(statement)
+        db.execute("CREATE UNIQUE INDEX quality_correction_replacement_once ON quality_corrections(replacement_of) WHERE replacement_of IS NOT NULL")
+        db.execute("CREATE UNIQUE INDEX quality_correction_page_replacement_once ON quality_corrections(job_id,page_index) WHERE replacement_of IS NOT NULL")
+        db.execute("CREATE UNIQUE INDEX quality_correction_normal_slot ON quality_corrections(job_id,page_index,optimization_slot) WHERE replacement_of IS NULL")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise RuntimeError("Correction migration failed foreign-key validation")
+        db.commit()
+    except BaseException:
+        db.rollback()
+        raise
+    finally:
+        db.execute("PRAGMA foreign_keys=" + str(int(bool(foreign_keys))))
+
+
+def _authorization_artifact(value, kind):
+    """Read small immutable evidence, never inline image payloads or credentials."""
+    if not isinstance(value, dict) or set(value) != {"path", "sha256"}:
+        _reject("Authorization requires an artifact path and SHA-256")
+    try:
+        path = Path(value["path"]).resolve(strict=True)
+        raw = path.read_bytes()
+        if len(raw) > 1024 * 1024 or hashlib.sha256(raw).hexdigest() != value["sha256"]:
+            raise ValueError("Authorization artifact size or SHA-256 mismatch")
+        body = json.loads(raw)
+        if not isinstance(body, dict) or body.get("kind") != kind or _contains_inline_binary(body):
+            raise ValueError("Authorization artifact kind or content invalid")
+    except (OSError, ValueError, TypeError) as error:
+        _reject(str(error))
+    return {"path": str(path), "sha256": value["sha256"], "content": body}
 
 
 def _save(db, attempt_id, journal, event, details=None):
@@ -111,6 +178,145 @@ class CorrectionRecoveryMixin:
     @staticmethod
     def _reserve_correction_recovery(db, attempt_id):
         _save(db, attempt_id, {"schema_version": 1, "phase": "reserved"}, "reserved")
+
+    def supersede_unknown_with_authorization(self, job_id, page_index, *, attempt_id,
+            generator_agent_id, new_generator_agent_id, operator_agent_id, optimization,
+            authorization, mode="manual_requested", policy=None):
+        """Reserve one extra physical call, preserving an unknown logical slot.
+
+        This is an explicit audited authorization, not evidence of remote
+        failure/non-submission. It permits no publication action. A subsequent
+        ordinary prepare/claim is still required before any actual tool call.
+        """
+        if mode not in {"manual_requested", "explicit_policy"}:
+            _reject("Replacement requires a manual request or an explicit authorized policy")
+        for value, label in ((new_generator_agent_id, "new_generator_agent_id"),
+                             (operator_agent_id, "operator_agent_id")):
+            self._quality_input(agent_id, value, label)
+        with self._transaction() as db:
+            row, journal = self._correction(db, job_id, page_index, attempt_id, generator_agent_id)
+            if db.execute("SELECT 1 FROM publications WHERE job_id=? AND status!='pending'", (job_id,)).fetchone():
+                _reject("Publication is no longer pending; unknown generation replacement cannot mutate this package")
+            if journal["phase"] not in {"unknown", "dispatching", "submitted"} or row["replacement_of"]:
+                _reject("Only an unresolved normal generation invocation may receive one replacement")
+            if db.execute("SELECT 1 FROM quality_corrections WHERE job_id=? AND page_index=? AND replacement_of IS NOT NULL",
+                          (job_id, page_index)).fetchone():
+                _reject("The page's single unknown replacement budget is already reserved")
+            job = db.execute("SELECT run_id,artwork_id FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            receipt = _authorization_artifact(authorization, "authorized_unknown_replacement")
+            body = receipt["content"]
+            expected = {"run_id": job["run_id"], "job_id": job_id, "artwork_id": job["artwork_id"],
+                        "page_index": page_index, "attempt_id": attempt_id,
+                        "generator_agent_id": generator_agent_id, "new_generator_agent_id": new_generator_agent_id,
+                        "operator_agent_id": operator_agent_id, "mode": mode,
+                        "local_request_id": journal.get("local_request_id"),
+                        "request_sha256": journal.get("request", {}).get("request_sha256")}
+            if any(key not in body or body[key] != value for key, value in expected.items()):
+                _reject("Replacement authorization must bind this run, artwork, page, executor and dispatch incarnation")
+            if body.get("accept_unknown_outcome") is not True or body.get("original_executor_stopped") is not True:
+                _reject("Replacement must retain remote uncertainty and establish the original local executor stopped")
+            self._quality_input(nonempty, body.get("statement"), "Replacement authorization statement")
+            stopped = _authorization_artifact(body.get("executor_stop_evidence"), "executor_stopped")
+            stop_keys = ("run_id", "job_id", "artwork_id", "page_index", "attempt_id", "generator_agent_id",
+                         "local_request_id", "request_sha256")
+            if (stopped["content"].get("outcome") != "stopped"
+                    or any(k not in stopped["content"] or stopped["content"][k] != expected[k] for k in stop_keys)):
+                _reject("Executor stop evidence must bind the original generator and exact dispatch incarnation")
+            self._quality_input(nonempty, stopped["content"].get("statement"), "Executor stop evidence statement")
+            source = _authorization_artifact(body.get("user_authorization"), "explicit_user_authorization")
+            for field in ("source", "user_message"):
+                self._quality_input(nonempty, source["content"].get(field), "User authorization " + field)
+            allowed_scopes = {"one_unknown_replacement", "bounded_unknown_recovery_policy"}
+            if source["content"].get("scope") not in allowed_scopes:
+                _reject("User authorization does not authorize unknown generation replacement")
+            if mode == "manual_requested" and source["content"].get("scope") != "one_unknown_replacement":
+                _reject("A manual replacement requires its own targeted one-time user authorization")
+            if source["content"].get("scope") == "one_unknown_replacement":
+                if any(source["content"].get(k) != expected[k] for k in ("run_id", "job_id", "artwork_id", "page_index", "attempt_id")):
+                    _reject("One-time user authorization must bind the original run and target attempt")
+            policy_receipt = None
+            if mode == "explicit_policy":
+                policy_receipt = _authorization_artifact(policy, "bounded_unknown_recovery_policy")
+                policy_body = policy_receipt["content"]
+                if (policy_body.get("enabled") is not True
+                        or type(policy_body.get("max_unknown_replacements_per_page")) is not int
+                        or policy_body["max_unknown_replacements_per_page"] != 1
+                        or policy_body.get("generation_only") is not True
+                        or policy_body.get("unknown_publication_action") != "reconcile"
+                        or (policy_body.get("scope") != "all_runs" and policy_body.get("run_id") != job["run_id"])
+                        or policy_body.get("user_authorization") != body["user_authorization"]
+                        or source["content"].get("scope") != "bounded_unknown_recovery_policy"):
+                    _reject("Automatic recovery policy must be explicitly authorized, bounded to one and generation-only")
+            elif policy is not None:
+                _reject("A manual replacement must not implicitly activate an automatic policy")
+            page = self._page(db, job_id, page_index)
+            self._validate_correction_optimization(db, job_id, page_index, page, optimization)
+            if not row["optimization"] or optimization != json.loads(row["optimization"]):
+                _reject("A replacement inherits the original logical slot's complete optimization contract")
+            self._assign_agent(db, job_id, new_generator_agent_id, "generator", fresh=True)
+            number = db.execute("SELECT COALESCE(MAX(attempt_number),0)+1 FROM quality_corrections WHERE job_id=? AND page_index=?",
+                                (job_id, page_index)).fetchone()[0]
+            if number > 3:
+                _reject("Physical correction budget exceeded")
+            audit = {"authorization": receipt, "user_authorization": source,
+                     "executor_stop_evidence": stopped, "policy": policy_receipt}
+            attempt = {"attempt_id": uuid4().hex, "attempt_number": number,
+                       "optimization_slot": row["optimization_slot"], "replacement_of": attempt_id,
+                       "generator_agent_id": new_generator_agent_id, "optimization": optimization}
+            db.execute("""INSERT INTO quality_corrections(attempt_id,job_id,page_index,attempt_number,
+                generator_agent_id,optimization,optimization_slot,replacement_of,replacement_authorization)
+                VALUES (?,?,?,?,?,?,?,?,?)""", (attempt["attempt_id"], job_id, page_index, number,
+                new_generator_agent_id, json.dumps(optimization, ensure_ascii=False), row["optimization_slot"],
+                attempt_id, json.dumps(audit, ensure_ascii=False)))
+            prior_journal = json.loads(row["recovery"]) if row["recovery"] else None
+            journal.update(superseded_from_phase=journal["phase"], phase="superseded_unknown", outcome="unknown", superseded_by=attempt["attempt_id"],
+                           replacement_authorization=audit)
+            _save(db, attempt_id, journal, "authorized_unknown_superseded", {"prior_journal": prior_journal, "journal": journal})
+            db.execute("UPDATE quality_corrections SET status='superseded_unknown' WHERE attempt_id=?", (attempt_id,))
+            self._reserve_correction_recovery(db, attempt["attempt_id"])
+            # correction_count retains the number of normal logical slots.
+            db.execute("UPDATE pages SET pending_correction=?,quality_blocked=0 WHERE job_id=? AND page_index=?",
+                       (json.dumps(attempt, ensure_ascii=False), job_id, page_index))
+            self._invalidate_reviews(db, job_id)
+            self._refresh(db, job_id)
+            return attempt
+
+    def audit_late_superseded_result(self, job_id, page_index, *, attempt_id,
+                                    generator_agent_id, generation_trace, evidence):
+        """Retain a late real return without selecting it or changing any budget.
+
+        The superseded unknown decision remains historical fact. This audit is
+        not a new candidate, a replacement cancellation, or permission to call.
+        """
+        from p2cos_state import inspect_image
+        with self._transaction() as db:
+            row, journal = self._correction(db, job_id, page_index, attempt_id, generator_agent_id, terminal=True)
+            if row["status"] != "superseded_unknown" or journal["phase"] != "superseded_unknown":
+                _reject("Late audit only accepts the original superseded unknown attempt")
+            receipt = _evidence(evidence, row, "tool_result")
+            if not isinstance(generation_trace, dict):
+                _reject("Late result requires its original real generation trace")
+            output = inspect_image(generation_trace["output_path"])
+            result = {"output": output, "generation_trace": generation_trace, "evidence": receipt}
+            self._validate_saved_trace(db, row, result)
+            request = journal.get("request")
+            if request and any(generation_trace[k] != request[k] for k in ("actual_prompt", "prompt_sha256", "references")):
+                _reject("Late result trace does not match the original request")
+            if (receipt["content"].get("output_sha256") != output["sha256"]
+                    or receipt["content"].get("prompt_sha256") != generation_trace["prompt_sha256"]):
+                _reject("Late result evidence hash mismatch")
+            if "late_result" in journal:
+                if journal["late_result"] != result:
+                    _reject("Late result audit is immutable")
+                return journal
+            paths = [json.loads(r[0])["cos"]["path"] for r in db.execute(
+                "SELECT snapshot FROM quality_versions WHERE job_id=? AND page_index=?", (job_id, page_index))]
+            raw = json.loads(self._page(db, job_id, page_index)["raw"])
+            if output["path"] == raw["path"] or output["path"] in paths:
+                _reject("Late output must retain its own immutable artifact path")
+            journal["late_result"] = result
+            _save(db, attempt_id, journal, "late_superseded_result_saved")
+            return journal
 
     def _correction(self, db, job_id, page_index, attempt_id, generator_agent_id, *, terminal=False):
         row = db.execute("SELECT * FROM quality_corrections WHERE job_id=? AND page_index=? AND attempt_id=?",
@@ -197,7 +403,7 @@ class CorrectionRecoveryMixin:
             row, journal = self._correction(db, job_id, page_index, attempt_id, generator_agent_id)
             claimed = db.execute("SELECT 1 FROM correction_recovery_events WHERE attempt_id=? AND event='dispatch_claimed'",
                                  (attempt_id,)).fetchone()
-            if journal["phase"] not in {"reserved", "prepared"} or claimed:
+            if journal["phase"] not in {"reserved", "prepared"} or claimed or row["replacement_of"]:
                 _reject("Only a journaled reservation that has never claimed dispatch can be reassigned")
             self._assign_agent(db, job_id, new_generator_agent_id, "generator", fresh=True)
             page = self._page(db, job_id, page_index)
@@ -418,6 +624,7 @@ def inspect_recovery(db_path, job_id, page_index=None):
             "legacy_failure_unverified": "legacy reason-only failure is unverified and does not qualify for completed retry fallback",
             "confirmed_not_submitted": "prepare same attempt after original executor is stopped; budget unchanged",
             "abandoned_unknown": "unknown remains audited and budget consumed; does not qualify as completed retry",
+            "superseded_unknown": "remote outcome remains unknown; follow the separately authorized replacement, never resubmit this attempt",
         }
         for row in rows:
             item = dict(row)
@@ -426,6 +633,8 @@ def inspect_recovery(db_path, job_id, page_index=None):
             saved_evidence = journal.get("result", {}).get("evidence", {})
             items.append({"attempt_id": item["attempt_id"], "page_index": item["page_index"],
                           "attempt_number": item["attempt_number"], "generator_agent_id": item["generator_agent_id"],
+                          "optimization_slot": item.get("optimization_slot", item["attempt_number"]),
+                          "replacement_of": item.get("replacement_of"), "superseded_by": journal.get("superseded_by"),
                           "status": item["status"], "phase": journal["phase"],
                           "local_request_id": journal.get("local_request_id"), "submission": journal.get("submission"),
                           "request_sha256": journal.get("request", {}).get("request_sha256"),
